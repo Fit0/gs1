@@ -1,0 +1,6 @@
+/vendor/
+# A library does not commit its lock file: it is tested against the newest versions its constraints allow.
+/composer.lock
+/var/
+.DS_Store
+.idea/

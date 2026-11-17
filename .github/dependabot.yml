@@ -1,0 +1,33 @@
+# A weekly pull request for each ecosystem the project uses. The titles follow Conventional Commits
+# (`build(deps): ...`, `ci(deps): ...`), since the title of the pull request becomes the squash commit.
+version: 2
+
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    groups:
+      dev-tools:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Madrid
+    labels: [dependencies]
+    commit-message:
+      prefix: ci
+      include: scope

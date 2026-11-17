@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch cancels the run that is still in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PHP_VERSION: "8.4"
+
+jobs:
+  composer:
+    name: Composer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Audit dependencies for known vulnerabilities
+        run: composer audit
+
+  quality:
+    name: Code quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: PHP-CS-Fixer
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+      - name: Rector
+        run: vendor/bin/rector process --dry-run
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=1G
+
+  # The core must work with Laravel absent (ADR 0001): Testbench is removed before installing, so
+  # nothing of Illuminate is on the machine, and only the tests that need no framework run.
+  core:
+    name: Core, PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.3", "8.4", "8.5"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Install without Laravel
+        run: |
+          composer remove --dev orchestra/testbench --no-update
+          composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Check that Illuminate is not installed
+        run: test ! -d vendor/illuminate
+
+      - name: Pest (core)
+        run: vendor/bin/pest --testsuite Core
+
+  # The versions the package says it supports (ADR 0002): each Laravel on each PHP it runs on, with the
+  # Testbench that goes with it (Laravel 12 with Testbench 10, Laravel 13 with Testbench 11).
+  laravel:
+    name: Laravel ${{ matrix.laravel }}, PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.3", "8.4", "8.5"]
+        laravel: ["12", "13"]
+        include:
+          - laravel: "12"
+            testbench: "^10.0"
+          - laravel: "13"
+            testbench: "^11.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Pick the Laravel version
+        run: |
+          composer require --dev --no-interaction --no-update \
+            "laravel/framework:^${{ matrix.laravel }}.0" \
+            "orchestra/testbench:${{ matrix.testbench }}"
+          composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Pest
+        run: vendor/bin/pest
+
+  pr-title:
+    name: PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # The title becomes the squash commit message, so it follows Conventional Commits.
+      # It goes through an environment variable so it is never interpreted as shell code.
+      - name: Check Conventional Commits format
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|refactor|test|docs|build|ci|perf|style|chore)(\([a-z0-9-]+\))?!?: .{1,72}$'
+          if ! printf '%s' "$TITLE" | grep -Eq "$pattern"; then
+            echo "::error title=Invalid PR title::\"$TITLE\" does not match <type>(<scope>): <description>. See CONTRIBUTING.md."
+            exit 1
+          fi
